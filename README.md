@@ -1,1 +1,1 @@
-# Titanic-linear-generalized-models
+# Titanic-generalized-linear-models
