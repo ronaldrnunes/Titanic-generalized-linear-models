@@ -1,1 +1,218 @@
 
+---
+title: "Modelos lineares generalizados para a sobrevivência no Titanic"
+format: html
+lang: pt-BR
+execute:
+  warning: false
+  message: false
+---
+
+## 2) Seleção do preditor linear e da função de ligação
+
+Como a variável resposta `vivo` possui duas categorias, foram ajustados modelos
+lineares generalizados com distribuição binomial. A categoria de interesse foi a
+sobrevivência (`vivo = sim`). Para evitar a escolha do modelo com base em uma
+única divisão dos dados, o desempenho preditivo foi estimado por validação
+cruzada estratificada com cinco partições.
+
+As categorias de referência adotadas foram: terceira classe (`classe = III`),
+sexo masculino (`sexo = masculino`) e passageiro acompanhado
+(`sozinho = nao`). Desse modo, os coeficientes associados às variáveis
+categóricas representam mudanças em relação a esse perfil de referência.
+
+### Preditores lineares avaliados
+
+Foram considerados modelos de complexidade crescente. Além de um modelo
+contendo somente a idade e de um modelo aditivo com todas as covariáveis,
+foram avaliadas interações com justificativa prática. Elas permitem verificar
+se os efeitos de sexo, classe, idade e condição de viagem foram diferentes
+entre os grupos de passageiros.
+
+| Identificação | Fórmula em R | Motivação |
+|---|---|---|
+| `idade` | `vivo ~ idade` | Modelo simples de referência. |
+| `aditivo` | `vivo ~ classe + idade + sexo + sozinho` | Considera todas as covariáveis sem interação. |
+| `interacao_sexo_sozinho` | `vivo ~ classe + idade + sexo * sozinho` | Verifica se viajar sozinho teve efeitos diferentes para homens e mulheres. |
+| `interacao_sexo_classe` | `vivo ~ idade + sozinho + sexo * classe` | Verifica se o efeito do sexo variou entre as classes. |
+| `interacao_sexo_idade` | `vivo ~ classe + sozinho + sexo * idade` | Verifica se o efeito da idade variou de acordo com o sexo. |
+| `interacao_classe_idade` | `vivo ~ sexo + sozinho + classe * idade` | Verifica se o efeito da idade variou entre as classes. |
+| `interacoes_sexo` | `vivo ~ sozinho + sexo * classe + sexo * idade` | Inclui simultaneamente as duas principais interações envolvendo sexo. |
+| `interacao_sozinho_classe` | `vivo ~ classe + idade + sexo + sozinho + sozinho:classe` | Verifica se o efeito de viajar sozinho variou entre as classes. |
+| `interacao_sozinho_idade` | `vivo ~ classe + idade + sexo + sozinho + sozinho:idade` | Verifica se a associação entre idade e sobrevivência dependeu de o passageiro viajar sozinho. |
+
+```{r}
+#| label: ajuste-workflow-sets
+
+library(tidymodels)
+library(workflowsets)
+
+dados <- read.csv("titanic.csv") |>
+  transform(
+    vivo = relevel(factor(vivo), ref = "nao"),
+    classe = relevel(factor(classe), ref = "III"),
+    sexo = relevel(factor(sexo), ref = "masculino"),
+    sozinho = relevel(factor(sozinho), ref = "nao")
+  )
+
+set.seed(6)
+dobras <- vfold_cv(dados, v = 5, strata = vivo)
+
+preditores <- list(
+  idade = vivo ~ idade,
+  aditivo = vivo ~ classe + idade + sexo + sozinho,
+  interacao_sexo_sozinho = vivo ~ classe + idade + sexo * sozinho,
+  interacao_sexo_classe = vivo ~ idade + sozinho + sexo * classe,
+  interacao_sexo_idade = vivo ~ classe + sozinho + sexo * idade,
+  interacao_classe_idade = vivo ~ sexo + sozinho + classe * idade,
+  interacoes_sexo = vivo ~ sozinho + sexo * classe + sexo * idade,
+  interacao_sozinho_classe = vivo ~ classe + idade + sexo + sozinho + sozinho:classe,
+  interacao_sozinho_idade = vivo ~ classe + idade + sexo + sozinho + sozinho:idade
+)
+```
+
+### Funções de ligação
+
+Cada preditor linear foi combinado com três funções de ligação binomiais:
+
+1. **Logito:** $g(p)=\log\left[p/(1-p)\right]$. É a ligação usual da
+   regressão logística e permite interpretar $\exp(\beta)$ diretamente como
+   razão de chances, quando não há interação envolvendo a covariável.
+2. **Probito:** $g(p)=\Phi^{-1}(p)$, em que $\Phi$ é a função de distribuição
+   acumulada normal padrão.
+3. **Complemento log-log:** $g(p)=\log[-\log(1-p)]$. Essa ligação é
+   assimétrica e pode representar de maneira diferente probabilidades próximas
+   de zero e de um.
+
+```{r}
+#| label: funcoes-ligacao
+
+modelos <- list(
+  logit = logistic_reg() |>
+    set_engine("glm", family = binomial(link = "logit")),
+  probit = logistic_reg() |>
+    set_engine("glm", family = binomial(link = "probit")),
+  cloglog = logistic_reg() |>
+    set_engine("glm", family = binomial(link = "cloglog"))
+)
+
+resultados <- workflow_set(preditores, modelos) |>
+  workflow_map(
+    "fit_resamples",
+    resamples = dobras,
+    metrics = metric_set(roc_auc, accuracy, brier_class)
+  )
+
+comparacao <- collect_metrics(resultados) |>
+  select(wflow_id, .metric, mean, std_err) |>
+  pivot_wider(
+    names_from = .metric,
+    values_from = c(mean, std_err)
+  ) |>
+  arrange(desc(mean_roc_auc), desc(mean_accuracy), mean_brier_class)
+
+comparacao
+```
+
+A combinação dos nove preditores com as três ligações resultou em 27 modelos.
+A AUC avalia a capacidade de discriminar sobreviventes de não sobreviventes
+sem depender de um ponto de corte. A acurácia representa a proporção de
+classificações corretas no ponto de corte padrão, enquanto o índice de Brier
+avalia a qualidade das probabilidades estimadas. AUC e acurácia devem ser
+maximizadas; o índice de Brier deve ser minimizado.
+
+### Validação cruzada
+
+Os modelos foram comparados por validação cruzada estratificada com cinco
+partições, preservando aproximadamente a proporção
+de sobreviventes em cada grupo. A acurácia, a AUC e o Brier apresentados
+correspondem às médias obtidas nas cinco partições, fornecendo uma comparação
+mais estável do que uma única divisão dos dados em treino e teste.
+
+### Comparação dos modelos com melhor desempenho
+
+Os dez primeiros resultados, ordenados pela AUC, foram:
+
+| Modelo | Acurácia | Brier | AUC |
+|---|---:|---:|---:|
+| `interacoes_sexo_cloglog` | 0,787 | 0,139 | 0,859 |
+| `interacoes_sexo_probit` | 0,798 | 0,139 | 0,858 |
+| `interacao_sexo_classe_logit` | 0,797 | 0,139 | 0,858 |
+| `interacoes_sexo_logit` | 0,794 | 0,139 | 0,858 |
+| `interacao_sexo_classe_probit` | 0,793 | 0,139 | 0,857 |
+| `interacao_sexo_classe_cloglog` | 0,793 | 0,141 | 0,857 |
+| `interacao_sexo_idade_logit` | 0,795 | 0,142 | 0,857 |
+| `interacao_sexo_idade_cloglog` | 0,811 | 0,140 | 0,856 |
+| `interacao_sexo_idade_probit` | 0,791 | 0,143 | 0,856 |
+| `interacao_classe_idade_cloglog` | 0,807 | 0,143 | 0,854 |
+
+#### 1. Melhor modelo em cada critério
+
+Nenhum modelo foi o melhor nas três métricas simultaneamente:
+
+| Critério | Melhor modelo | Resultado | Regra de escolha |
+|---|---|---:|---|
+| AUC | `interacoes_sexo_cloglog` | 0,859 | Maior é melhor. |
+| Acurácia | `interacao_sexo_idade_cloglog` | 0,811 | Maior é melhor. |
+| Brier | Empate entre os primeiros modelos | 0,139 | Menor é melhor. |
+
+Portanto, a escolha muda conforme o critério adotado. Pela AUC, seria escolhido
+`interacoes_sexo_cloglog`; pela acurácia, seria escolhido
+`interacao_sexo_idade_cloglog`. O Brier não separou claramente os principais
+modelos, pois vários apresentaram 0,139 após o arredondamento.
+
+#### 2. Comparação direta entre logito e complemento log-log
+
+Para comparar somente as funções de ligação, deve-se manter o mesmo preditor
+linear. A comparação abaixo utiliza `interacoes_sexo` nas duas ligações:
+
+| Métrica | Complemento log-log | Logito | Diferença | Melhor resultado |
+|---|---:|---:|---:|---|
+| Acurácia | 0,787 | 0,794 | 0,007 a favor do logito | Logito |
+| Brier | 0,139 | 0,139 | 0,000 | Empate |
+| AUC | 0,859 | 0,858 | 0,001 a favor do complemento log-log | Complemento log-log |
+
+O logito aumentou a acurácia em 0,007, equivalente a 0,7 ponto percentual. O
+Brier foi igual nas duas ligações. O complemento log-log aumentou a AUC em
+apenas 0,001, uma diferença muito pequena do ponto de vista prático. Assim, não
+foi observado ganho preditivo relevante que justificasse preferir a ligação
+complemento log-log, que possui interpretação menos direta.
+
+#### 3. Escolha entre os modelos logito
+
+Após a escolha da ligação logito, foram comparados os dois modelos logito com
+melhor desempenho:
+
+| Modelo | Número de interações | Acurácia | Brier | AUC |
+|---|---:|---:|---:|---:|
+| `interacao_sexo_classe_logit` | 1 | 0,797 | 0,139 | 0,858 |
+| `interacoes_sexo_logit` | 2 | 0,794 | 0,139 | 0,858 |
+
+Os modelos tiveram os mesmos valores de AUC e Brier. Entretanto,
+`interacao_sexo_classe_logit` apresentou acurácia ligeiramente maior e contém
+somente uma interação. Ele é, portanto, mais parcimonioso e mais simples de
+interpretar que `interacoes_sexo_logit`, que também contém a interação entre
+sexo e idade.
+
+#### Modelo selecionado
+
+O modelo escolhido foi `interacao_sexo_classe_logit`, definido por
+
+$$
+\operatorname{logit}[P(\text{vivo}=\text{sim})]
+= \beta_0 + \beta_1\text{idade} + \beta_2\text{sozinho}
++ \boldsymbol{\beta}_3\text{sexo} + \boldsymbol{\beta}_4\text{classe}
++ \boldsymbol{\beta}_5(\text{sexo}\times\text{classe}).
+$$
+
+A escolha foi baseada em quatro pontos: desempenho praticamente igual ao dos
+melhores modelos complemento log-log; Brier entre os menores observados;
+estrutura com apenas uma interação; e interpretação mais direta. Na ligação
+logito, a exponenciação dos coeficientes — ou das combinações de coeficientes
+necessárias por causa da interação — produz razões de chances. Isso permite
+descrever diretamente como a associação entre sexo e sobrevivência mudou entre
+as classes do navio.
+
+Como as diferenças entre as métricas foram pequenas, a escolha não representa
+superioridade absoluta do logito. Ela é uma decisão que combina desempenho,
+parcimônia e facilidade de interpretação.
