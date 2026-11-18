@@ -1,7 +1,6 @@
 library(tidymodels)
 library(workflowsets)
 
-# Dados e categorias de referência
 dados <- read.csv("titanic.csv") |>
   transform(
     vivo = relevel(factor(vivo), ref = "nao"),
@@ -10,14 +9,19 @@ dados <- read.csv("titanic.csv") |>
     sozinho = relevel(factor(sozinho), ref = "nao")
   )
 
-set.seed(123)
+set.seed(6)
 dobras <- vfold_cv(dados, v = 5, strata = vivo)
 
-# Preditores lineares a comparar
 preditores <- list(
   idade = vivo ~ idade,
-  simples = vivo ~ classe + idade + sexo + sozinho,
-  interacao = vivo ~ classe + idade + sexo * sozinho
+  aditivo = vivo ~ classe + idade + sexo + sozinho,
+  interacao_sexo_sozinho = vivo ~ classe + idade + sexo * sozinho,
+  interacao_sexo_classe = vivo ~ idade + sozinho + sexo * classe,
+  interacao_sexo_idade = vivo ~ classe + sozinho + sexo * idade,
+  interacao_classe_idade = vivo ~ sexo + sozinho + classe * idade,
+  interacoes_sexo = vivo ~ sozinho + sexo * classe + sexo * idade,
+  interacao_sozinho_classe = vivo ~ classe + idade + sexo + sozinho + sozinho:classe,
+  interacao_sozinho_idade = vivo ~ classe + idade + sexo + sozinho + sozinho:idade
 )
 
 # Mesma regressão logística, com links diferentes
