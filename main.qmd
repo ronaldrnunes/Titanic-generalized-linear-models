@@ -542,3 +542,63 @@ as classes do navio.
 Como as diferenças entre as métricas foram pequenas, a escolha não representa
 superioridade absoluta do logito. Ela é uma decisão que combina desempenho,
 parcimônia e facilidade de interpretação.
+
+#4 OddRatio & Efeitos/ Interpretação/ Conclusão
+
+Com base nos testes feitos, o modelo que mais se adequou foi
+`modelo_final` <- glm( `vivo` ~ `idade` + `sozinho` + `sexo` + `classe` + `sexo:classe`, `family` = `binomial(link = "logit")`
+
+Então, é necessário usar os coeficientes Beta, para calcular as OddRatio,
+mas como o retorno sempre vem em escala logarítmica, será necessário também
+aplicar a função exponencial `exp()`. O intervalo de confiança será de 5%.
+
+```{r}
+# 1.Modelo Final
+modelo_final <- glm(
+  vivo ~ idade + sozinho + sexo + classe + sexo:classe,
+  family = binomial(link = "logit"),
+  data = dados
+)
+# 2.Coeficientes/ Odds Ratios (OR)/ IC 95%
+tabela_or <- cbind(
+  `Beta (Log-Odds)` = coef(modelo_final),
+  `Odds Ratio (exp(B))` = exp(coef(modelo_final)),
+  `IC 95% (Inf)` = exp(confint(modelo_final))[, 1],
+  `IC 95% (Sup)` = exp(confint(modelo_final))[, 2]
+)
+knitr::kable(round(tabela_or, 4), caption = "Odds Ratios com IC de 95%")
+```
+
+|Covariável            | Beta (Log-Odds)  | Odds Ratio (exp(B))|   IC 95% (Inf)  |  IC 95% (Sup)  |
+|:---------------------|-----------------:|-------------------:|----------------:|---------------:|
+|(Intercept)           |     -0.7461      |       0.4742       |     0.2739      |     0.8087     |
+|idade                 |     -0.0429      |       0.9580       |     0.9417      |     0.9738     |
+|sozinhosim            |      0.0911      |       1.0954       |     0.7163      |     1.6892     |
+|sexofeminino          |      1.4727      |       4.3608       |     2.5308      |     7.5882     |
+|classeI               |      2.0076      |       7.4453       |     4.0161      |    14.0543     |
+|classeII              |      0.1586      |       1.1719       |     0.5881      |     2.2430     |
+|sexofeminino:classeI  |      2.1842      |       8.8835       |     2.6114      |    41.5376     |
+|sexofeminino:classeII |      2.8566      |      17.4025       |     5.7529      |    59.5297     |
+
+A tabela retornada, traz os betas, e valores associados de chance. O `Intercept`
+é sobre um homem de 3ª classe, “ao nascer” e acompanhado.
+
+As outras covariáveis:
+Idade: A cada ano a partir de zero, a chance de sobreviver cai 4,20%
+Sozinho: o IC contém o valor 1, então não faz muita diferença estar sozinho ou
+acompanhado
+Sexo: Uma mulher de 3ª classe, tem 4 vezes mais chance de sobreviver que
+o homem nas mesmas condições
+Classe I: Um homem na 1ª classe tem 7 vezes mais chance de sobreviver que
+um da 3ª classe
+Claase II: Para os homens, pelo IC conter o valor 1, estar na 2ª classe,
+não aumentou as chances de sobrevivência, em relação a um homem da 3ª
+Sexo & Classe I: Uma mulher da 1ª classe teve 8 vezes mais chance de
+sobreviver (desconsiderando os efeitos individuais)
+Sexo & Classe II: Uma mulher da 2ª classe teve 17 vezes mais chance
+de sobrevivência (desconsiderando os efeitos individuais).
+
+Efeito combinado: Analisando também as variáveis individuais também,
+uma mulher de 1ª classe aumenta as chances de sobrevivência em mais
+de 280 vezes ( exp(1.4727+2.0076+2.1842) )
+
