@@ -929,7 +929,7 @@ Todos os valores de $\text{GVIF}^{1/(2\,gl)}$ ficam entre 1,04 e 1,15, bem abaix
 Os diagnósticos indicam que o modelo está bem ajustado. Os resíduos quantílicos são compatíveis com a normal padrão (Shapiro-Wilk: p = 0,286) e não mostram padrão contra os valores ajustados nem contra as covariáveis. O efeito linear da idade é adequado, nenhuma observação é influente pelo critério de Cook e não há multicolinearidade. A única ressalva é o pequeno número de óbitos femininos nas classes I e II, que deixa largos os intervalos desses grupos. Portanto, a inferência sobre os coeficientes e as razões de chances é válida.
 
 
-#4 OddRatio & Efeitos/ Interpretação/ Conclusão
+# 4) OddRatio & Efeitos/ Interpretação/ Conclusão
 
 Com base nos testes feitos, o modelo que mais se adequou foi
 `modelo_final` <- glm( `vivo` ~ `idade` + `sozinho` + `sexo` + `classe` + `sexo:classe`, `family` = `binomial(link = "logit")`
@@ -988,3 +988,68 @@ Efeito combinado: Analisando também as variáveis individuais também,
 uma mulher de 1ª classe aumenta as chances de sobrevivência em mais
 de 280 vezes ( exp(1.4727+2.0076+2.1842) )
 
+## Teste
+
+Como já temos as Odds do modelo baseada nos dados, podemos testar como
+diferentes perfis pessoas, têm chance de sobrevivência, baseado no modelo:
+
+```{r}
+# 3.Teste de Dados Hipotéticos
+perfis <- data.frame(
+  perfil = c(
+    "1. Mulher 1ª Classe (27 anos, acompanhada)",
+    "2. Mulher 1ª Classe (27 anos, sozinha)",
+    "3. Mulher 3ª Classe (27 anos, acompanhada)",
+    "4. Mulher 3ª Classe (27 anos, sozinha)",
+    "5. Homem 1ª Classe (27 anos, acompanhado)",
+    "6. Homem 1ª Classe (27 anos, sozinho)",
+    "7. Homem 3ª Classe (27 anos, sozinho)",
+    "8. Criança Homem 3ª Classe (7 anos, acompanhado)"
+  ),
+  sexo = factor(c("feminino", "feminino", "feminino", "feminino",
+                  "masculino", "masculino", "masculino", "masculino"),
+                levels = levels(dados$sexo)),
+  classe = factor(c("I", "I", "III", "III", "I", "I", "III", "III"),
+                  levels = levels(dados$classe)),
+  idade = c(27, 27, 27, 27, 27, 27, 27, 7),
+  sozinho = factor(c("nao", "sim", "nao", "sim", "nao", "sim", "sim", "nao"),
+                   levels = levels(dados$sozinho))
+)
+
+# 4. Cálculo de Prob. Predita
+perfis$prob_sobrevivencia <- predict(modelo_final, newdata = perfis, type = "response")
+perfis$prob_porcentagem <- round(perfis$prob_sobrevivencia * 100, 1)
+
+knitr::kable(
+  perfis[, c("perfil", "prob_porcentagem")],
+  col.names = c("Perfil Hipotético do Passageiro", "Probabilidade Predita (%)"),
+  caption = "Probabilidades Preditas de Sobrevivência por Perfil"
+)
+```
+
+|Perfil Hipotético do Passageiro                  | Probabilidade Predita (%)|
+|:------------------------------------------------|-------------------------:|
+|1. Mulher 1ª Classe (27 anos, acompanhada)       |           97.7           |
+|2. Mulher 1ª Classe (27 anos, sozinha)           |           97.9           |
+|3. Mulher 3ª Classe (27 anos, acompanhada)       |           39.4           |
+|4. Mulher 3ª Classe (27 anos, sozinha)           |           41.6           |
+|5. Homem 1ª Classe (27 anos, acompanhado)        |           52.6           |
+|6. Homem 1ª Classe (27 anos, sozinho)            |           54.8           |
+|7. Homem 3ª Classe (27 anos, sozinho)            |           14.0           |
+|8. Criança Homem 3ª Classe (7 anos, acompanhado) |           26.0           |
+
+Conclusão
+
+Com base em todos os dados e testes, inclusive o hipotético acima,
+fica evidenciado que, mantendo as classes constantes, a sobrevivência
+das mulheres e criança é facilmente vista, nos mostrando que, o
+protocolo da época de “mulheres e crianças primeiro” aparentemente
+foi seguido. Porém, a disponibilidade dos barcos não beneficiou as
+pessoas das 3ª classe já que, mesmo sendo uma mulher, a chance de
+sobrevivência é menor que 50% na 3ª classe. Isto fica ainda mais
+visível, pois um homem na 1ª classe registrou a probabilidade
+maior que na 3ª classe.
+Independente de qualquer resultado que foi calculado, vemos que
+o que aconteceu neste acidente (e em outros), abriu um alerta
+e fez com que fosse definido um protocolo e regras rígidas
+para esse tipo de transporte.
