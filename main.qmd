@@ -1,14 +1,348 @@
-
 ---
-title: "Modelos lineares generalizados para a sobrevivência no Titanic"
-format: html
-lang: pt-BR
+title: "Trabalho MLG - Titanic"
+author: "Grupo 6"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: false
+    df-print: paged
 execute:
   warning: false
   message: false
+lang: pt-BR
 ---
 
-## 2) Seleção do preditor linear e da função de ligação
+# Introdução
+
+O objetivo deste trabalho é analisar o banco de dados `titanic.csv`, que traz informações sobre os passageiros do naufrágio do Titanic (14/04/1912).
+
+As variáveis são:
+
+| Variável  | Tipo       | Categorias / unidade          |
+|-----------|------------|-------------------------------|
+| `vivo`    | categórica | sim / não (variável resposta) |
+| `classe`  | categórica | I, II, III                    |
+| `idade`   | numérica   | anos                          |
+| `sexo`    | categórica | masculino / feminino          |
+| `sozinho` | categórica | sim / não                     |
+
+# 1) Análise Exploratória dos Dados
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+dados <- read_csv("titanic.csv")
+
+glimpse(dados)
+```
+
+As variáveis `vivo`, `classe`, `sexo` e `sozinho` estão como texto `chr` no banco e vamos precisar convertê-las para fator.
+
+Ao transformar em fator, definimos os *levels*. A ordem que colocamos define a categoria de referência em cada fator nos modelos lineares generalizados.
+
+```{r}
+dados <- dados |>
+  mutate(
+    vivo = factor(vivo, levels = c("nao", "sim")),
+    classe = factor(classe, levels = c("III", "I", "II")),
+    sexo = factor(sexo, levels = c("masculino", "feminino")),
+    sozinho = factor(sozinho, levels = c("nao", "sim"))
+  )
+
+glimpse(dados)
+```
+
+# Verificações iniciais
+
+## Dimensão e valores faltantes
+
+```{r}
+cat("Número de observações:", nrow(dados), "\n")
+cat("Número de variáveis:  ", ncol(dados), "\n\n")
+
+colSums(is.na(dados))
+```
+
+Não há valores faltantes, então não precisamos tratar valores nulos.
+
+## Níveis de cada fator
+
+```{r}
+dados |>
+  select(where(is.factor)) |>
+  map(levels)
+```
+
+# Análise descritiva univariada
+
+## Variáveis categóricas
+
+Tabelas de frequência absoluta e relativas
+
+```{r}
+dados |>
+  count(vivo) |>
+  mutate(prop = n / sum(n))
+```
+
+```{r}
+dados |>
+  count(classe) |>
+  mutate(prop = n / sum(n))
+```
+
+```{r}
+dados |>
+  count(sexo) |>
+  mutate(prop = n / sum(n))
+```
+
+```{r}
+dados |>
+  count(sozinho) |>
+  mutate(prop = n / sum(n))
+```
+
+Os quatro gráficos de barras, com as proporções, permitem comparar a composição de cada variável.
+
+```{r}
+dados |>
+  select(vivo, classe, sexo, sozinho) |>
+  pivot_longer(everything(), names_to = "variavel", values_to = "categoria") |>
+  count(variavel, categoria) |>
+  group_by(variavel) |>
+  mutate(prop = n / sum(n)) |>
+  ungroup() |>
+  ggplot(aes(x = categoria, y = prop, fill = categoria)) +
+  geom_col(show.legend = FALSE) +
+  scale_y_continuous(labels = scales::percent, expand = expansion(mult = c(0, 0.15))) +
+  facet_wrap(~variavel, scales = "free_x") +
+  labs(x = NULL, y = "Proporção", title = "Distribuição das variáveis categóricas")
+```
+
+## Variável numérica: `idade`
+
+```{r}
+summary(dados$idade)
+```
+
+**Histograma com curva de densidade:**
+
+```{r}
+ggplot(dados, aes(x = idade)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = 5, fill = "navyblue") +
+  geom_density(colour = "orange", linewidth = 1) +
+  labs(x = "Idade (anos)", y = "Densidade",
+       title = "Distribuição da idade dos passageiros")
+```
+
+Para ter mais detalhes na análise exploratória nós criamos uma variável com quatro faixas etárias mas a variável `idade` contínua permanece sendo a variável usada na modelagem.
+
+```{r}
+dados <- dados |>
+  mutate(
+    faixa = cut(
+      idade,
+      breaks = c(0, 12, 17, 59, Inf),
+      labels = c("criança (0-12)", "adolescente (13-17)", "adulto (18-59)", "idoso (60+)"),
+      include.lowest = TRUE
+    )
+  )
+
+dados |>
+  count(faixa) |>
+  mutate(prop = n / sum(n))
+```
+
+# Análise bivariada
+
+Aqui analisamos cada covariável em relação a sobrevivência, e depois as relações entre as próprias covariáveis e possíveis interações.
+
+## Taxa de sobrevivência por grupo
+
+```{r}
+taxa_fc <- function(var) {
+  dados |>
+    group_by({{ var }}) |>
+    summarise(
+      n = n(),
+      sobreviveram = sum(vivo == "sim"),
+      taxa = mean(vivo == "sim"),
+      .groups = "drop"
+    )
+}
+```
+
+```{r}
+taxa_fc(sexo)
+```
+
+```{r}
+taxa_fc(classe)
+```
+
+```{r}
+taxa_fc(sozinho)
+```
+
+```{r}
+taxa_fc(faixa)
+```
+
+Gráfico comparando as taxas com o tamanho de cada grupo:
+
+```{r}
+map(c("sexo", "classe", "sozinho", "faixa"), \(v) {
+  taxa_fc(.data[[v]]) |>
+    rename(categoria = all_of(v)) |>
+    mutate(variavel = v, categoria = as.character(categoria))
+}) |>
+  list_rbind() |>
+  ggplot(aes(x = categoria, y = taxa, fill = categoria)) +
+  geom_col(show.legend = FALSE) +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1.15)) +
+  facet_wrap(~variavel, scales = "free_x") +
+  labs(x = NULL, y = "Taxa de sobrevivência",
+       title = "Taxa de sobrevivência por covariável")
+```
+
+Mulheres sobreviveram em 75,5% dos casos, contra 20,5% dos homens. Na classe, a taxa cai de 65,6% na primeira para 48,0% na segunda e 23,9% na terceira. Quem viajava sozinho sobreviveu menos (32,2%) do que quem estava acompanhado (51,6%). Por faixa etária, as crianças têm a maior taxa (58,0%).
+
+## Idade e sobrevivência
+
+### Medidas por grupo
+
+```{r}
+dados |>
+  group_by(vivo) |>
+  summarise(
+    n = n(),
+    media = mean(idade),
+    mediana = median(idade),
+    desvio_pd = sd(idade),
+    .groups = "drop"
+  )
+```
+
+### Distribuições comparadas
+
+```{r}
+ggplot(dados, aes(x = vivo, y = idade, fill = vivo)) +
+  geom_boxplot(show.legend = FALSE) +
+  labs(x = "Sobreviveu?", y = "Idade (anos)",
+       title = "Idade por sobrevivência")
+```
+
+```{r}
+ggplot(dados, aes(x = idade, fill = vivo)) +
+  geom_density(alpha = 0.6) +
+  labs(x = "Idade (anos)", y = "Densidade", fill = "Sobreviveu?",
+       title = "Densidade da idade por sobrevivência")
+```
+
+## Relações entre as covariáveis
+### Idade por classe e sexo
+
+```{r}
+ggplot(dados, aes(x = classe, y = idade, fill = sexo)) +
+  geom_boxplot() +
+  labs(x = "Classe", y = "Idade (anos)", fill = "Sexo",
+       title = "Idade por classe e sexo")
+```
+
+```{r}
+dados |>
+  group_by(classe) |>
+  summarise(n = n(), media = mean(idade), mediana = median(idade), .groups = "drop")
+```
+
+### Sexo x Classe
+
+```{r}
+dados |>
+  count(sexo, classe) |>
+  group_by(sexo) |>
+  mutate(prop_no_sexo = n / sum(n)) |>
+  ungroup()
+```
+
+### Sozinho x Classe & Sozinho x Sexo
+
+```{r}
+dados |>
+  count(classe, sozinho) |>
+  group_by(classe) |>
+  mutate(prop_na_classe = n / sum(n)) |>
+  ungroup()
+```
+
+```{r}
+dados |>
+  count(sexo, sozinho) |>
+  group_by(sexo) |>
+  mutate(prop_no_sexo = n / sum(n)) |>
+  ungroup()
+```
+
+Com essas composições que construimos podemos analisar que
+
+- **Idade e classe:** a idade cai da primeira para a terceira classe (média de 38,2, 29,9 e 25,1 anos). Os passageiros da terceira classe são, em média, mais jovens.
+- **Sexo e classe:** entre os homens, 55,8% estão na terceira classe, contra 39,1% das mulheres. Entre as mulheres, 32,6% estão na primeira classe, contra 22,3% dos homens.
+- **Sozinho:** 67% dos homens viajavam sozinhos, contra 38% das mulheres.
+- **Sozinho e classe:** a proporção de passageiros sozinhos cresce da primeira classe para a terceira.
+
+## Interações potenciais
+
+Aqui investigamos quando o efeito de uma variável depende do nível de outra pelas taxas de sobrevivência nos cruzamentos.
+
+```{r}
+grafico_interacao <- function(x, fill) {
+  dodge <- position_dodge(width = 0.9)
+  dados |>
+    summarise(n = n(), taxa = mean(vivo == "sim"), .by = c({{ x }}, {{ fill }})) |>
+    ggplot(aes(x = {{ x }}, y = taxa, fill = {{ fill }})) +
+    geom_col(position = dodge) +
+    geom_text(aes(label = paste0("n=", n)), position = dodge, vjust = -0.4, size = 3) +
+    scale_y_continuous(labels = scales::percent, limits = c(0, 1.1)) +
+    labs(y = "Taxa de sobrevivência")
+}
+```
+
+### Sexo x classe
+
+```{r}
+grafico_interacao(classe, sexo) +
+  labs(x = "Classe", fill = "Sexo", title = "Sobrevivência por classe e sexo")
+```
+
+O efeito da classe é visivelmente diferente entre os sexos. Entre as mulheres, a sobrevivência fica entre 92% e 97% nas classes I e II e cai para 46% na III. Entre os homens, a primeira classe tem 40% e as demais cerca de 15%. A queda da classe parece muito maior para os homens na primeira classe do que para as mulheres.
+
+### Sexo x faixa etária
+
+```{r}
+grafico_interacao(faixa, sexo) +
+  labs(x = "Faixa etária", fill = "Sexo", title = "Sobrevivência por faixa etária e sexo")
+```
+
+Entre as crianças de 0 a 12 anos, homens e mulheres sobreviveram quase na mesma proporção (57% e 59%). A partir dos 13 anos, a diferença fica mais evidente: entre os adolescentes 83% das mulheres sobreviveram contra 10% dos homens; entre os adultos, 77% contra 18%. Isso nos dá indícios que a diferença entre sexos depende da idade, e que a menor taxa geral das faixas mais velhas vem, em grande parte, dos homens adultos.
+
+### Sexo x sozinho
+
+```{r}
+grafico_interacao(sozinho, sexo) +
+  labs(x = "Sozinho", fill = "Sexo", title = "Sobrevivência por sexo e viagem sozinho")
+```
+
+Entre os homens, viajar sozinho reduz a sobrevivência. Entre as mulheres, o efeito é o oposto. Isso evidencia que o efeito de viajar sozinho parece ser diferente para homens e mulheres.
+
+# Modelagem
+
+Nesta etapa iniciamos a especificação do modelo e a seleção do preditor linear.
+
+## Seleção do preditor linear e da função de ligação
 
 Como a variável resposta `vivo` possui duas categorias, foram ajustados modelos
 lineares generalizados com distribuição binomial. A categoria de interesse foi a
@@ -46,14 +380,6 @@ entre os grupos de passageiros.
 
 library(tidymodels)
 library(workflowsets)
-
-dados <- read.csv("titanic.csv") |>
-  transform(
-    vivo = relevel(factor(vivo), ref = "nao"),
-    classe = relevel(factor(classe), ref = "III"),
-    sexo = relevel(factor(sexo), ref = "masculino"),
-    sozinho = relevel(factor(sozinho), ref = "nao")
-  )
 
 set.seed(6)
 dobras <- vfold_cv(dados, v = 5, strata = vivo)
