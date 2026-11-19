@@ -543,6 +543,392 @@ Como as diferenças entre as métricas foram pequenas, a escolha não representa
 superioridade absoluta do logito. Ela é uma decisão que combina desempenho,
 parcimônia e facilidade de interpretação.
 
+# Inferência
+
+## O modelo
+
+Seja $Y_i = 1$ se o passageiro $i$ sobreviveu e $Y_i = 0$ caso contrário. O MLG tem três componentes:
+
+-   **componente aleatório:** $Y_i \sim \text{Bernoulli}(\mu_i)$, em que $\mu_i = P(Y_i = 1)$;
+-   **componente sistemático:** $\eta_i = \beta_0 + \beta_1 x_{i1} + \dots + \beta_p x_{ip}$;
+-   **função de ligação:** logito, $g(\mu_i) = \log\{\mu_i/(1-\mu_i)\} = \eta_i$, a ligação canônica da Bernoulli.
+
+O modelo selecionado na seção anterior é
+
+$$
+\log\left(\frac{\mu_i}{1-\mu_i}\right) = \beta_0 + \beta_1\,\text{idade}_i + \beta_2\,\text{sozinho}_i +
+\beta_3\,\text{feminino}_i + \beta_4\,\text{classeI}_i + \beta_5\,\text{classeII}_i +
+\beta_6\,\text{feminino}_i\,\text{classeI}_i + \beta_7\,\text{feminino}_i\,\text{classeII}_i .
+$$
+
+```{r}
+#| label: pacotes-inferencia
+library(car)
+library(emmeans)
+library(gridExtra)
+library(reglin)
+```
+
+```{r}
+#| label: modelo-final
+# ajuste do modelo final:
+modelo_final <- glm(
+  vivo ~ idade + sozinho + sexo * classe,
+  data = dados,
+  family = binomial()
+)
+summary(modelo_final)
+```
+
+Os coeficientes de idade, sexo, classe I e das interações são significativos pelo teste de Wald, enquanto `classeII` (p = 0,640) e `sozinhosim` (p = 0,677) não são. Como há interação, os efeitos de sexo e classe são interpretados por meio de combinações de coeficientes, apresentadas mais adiante.
+
+## Análise de desvio do modelo final
+
+```{r}
+#| label: desvio-nulo
+# modelo nulo versus modelo final:
+null <- glm(vivo ~ 1, data = dados, family = binomial())
+anova(null, modelo_final, test = "Chisq")
+```
+
+Modelos encaixados, com um termo acrescentado por vez (ANODEV sequencial):
+
+```{r}
+#| label: anodev-sequencial
+m_a <- glm(vivo ~ idade,                           data = dados, family = binomial())
+m_b <- glm(vivo ~ idade + sozinho,                 data = dados, family = binomial())
+m_c <- glm(vivo ~ idade + sozinho + sexo,          data = dados, family = binomial())
+m_d <- glm(vivo ~ idade + sozinho + sexo + classe, data = dados, family = binomial())
+
+anova(null, m_a, m_b, m_c, m_d, modelo_final, test = "Chisq")
+```
+
+Como a ANODEV sequencial depende da ordem de entrada dos termos, usamos também os testes do tipo II, em que cada termo é testado na presença dos demais:
+
+```{r}
+#| label: anova-tipo2
+car::Anova(modelo_final, type = "II")
+```
+
+O modelo final reduz o desvio de 964,52 para 613,25 (TRV = 351,26; 7 gl; p \< 0,001; pseudo-$R^2$ de McFadden ≈ 0,36). Na ANODEV sequencial, sexo (187,8; 1 gl) e classe (101,3; 2 gl) são os termos que mais reduzem o desvio. A interação sexo × classe também é significativa (33,6; 2 gl; p \< 0,001), ou seja, a vantagem feminina na sobrevivência varia entre as classes.
+
+Os testes do tipo II mostram dois resultados que dependem do ajuste. A variável `sozinho`, significativa na ANODEV sequencial (24,3; p \< 0,001), deixa de ser na presença das demais covariáveis (0,175; p = 0,676). Esse resultado indica confundimento: passageiros sozinhos eram, em sua maioria, homens da terceira classe. Já a idade, com efeito fraco isoladamente (4,3; p = 0,038), torna-se fortemente significativa após o ajuste (27,97; p \< 0,001), porque os passageiros da terceira classe eram mais jovens.
+
+Conclui-se que idade, sexo, classe e a interação sexo × classe são relevantes para explicar a sobrevivência, enquanto viajar sozinho não contribui significativamente após o ajuste. Como a resposta é binária, o desvio residual não segue distribuição $\chi^2$ e não é usado como teste de bondade de ajuste; a adequação é avaliada pelos resíduos.
+
+## Testes de Wald
+
+Para cada coeficiente, testamos $H_0: \beta_j = 0$ com $z = \hat\beta_j / \widehat{EP}(\hat\beta_j)$. Esses testes são as colunas `z value` e `Pr(>|z|)` do `summary()`. Para hipóteses com mais de um coeficiente, usamos o teste de Wald conjunto:
+
+```{r}
+#| label: wald-conjunto
+# interação sexo:classe (H0: os dois coeficientes de interação são zero):
+car::linearHypothesis(
+  modelo_final,
+  c("sexofeminino:classeI = 0", "sexofeminino:classeII = 0")
+)
+
+# efeito principal de classe:
+car::linearHypothesis(modelo_final, c("classeI = 0", "classeII = 0"))
+```
+
+Comparação entre o teste de Wald e o teste da razão de verossimilhanças (TRV):
+
+```{r}
+#| label: wald-vs-trv
+car::Anova(modelo_final, type = "II", test.statistic = "Wald")
+```
+
+O teste de Wald conjunto rejeita a hipótese de ausência de interação sexo × classe ($\chi^2 = 28{,}66$; 2 gl; p \< 0,001) e de efeito nulo da classe entre os homens ($\chi^2 = 42{,}73$; 2 gl; p \< 0,001). Os testes de Wald e da razão de verossimilhanças tipo II chegam às mesmas conclusões para todos os termos: idade, sexo, classe e a interação são significativos, e viajar sozinho não é (p ≈ 0,68). As estatísticas de Wald são menores, sobretudo para sexo (97,2 contra 174,3) e classe (66,1 contra 101,3). Isso é esperado quando os efeitos são grandes, e por esse motivo o TRV é preferido para a inferência.
+
+## O efeito de sozinho
+
+```{r}
+#| label: sozinho-bruto
+# sozinho sem ajuste:
+m_soz <- glm(vivo ~ sozinho, data = dados, family = binomial())
+anova(null, m_soz, test = "Chisq")
+exp(coef(m_soz))
+```
+
+```{r}
+#| label: sozinho-ajustado
+# sozinho retirado do modelo final:
+m_sem_soz <- update(modelo_final, . ~ . - sozinho)
+anova(m_sem_soz, modelo_final, test = "Chisq")
+exp(coef(modelo_final))["sozinhosim"]
+```
+
+Sem ajuste, viajar sozinho está associado a menor sobrevivência (TRV = 27,50; 1 gl; p \< 0,001). A chance de sobreviver de quem viajava sozinho era cerca de 56% menor que a de quem viajava acompanhado (OR = 0,44). Depois do ajuste por idade, sexo, classe e pela interação sexo × classe, o efeito desaparece. A retirada de `sozinho` do modelo final quase não altera o desvio (0,17; 1 gl; p = 0,676), e a razão de chances ajustada fica próxima de 1 (OR = 1,10). A associação bruta era, portanto, resultado de confundimento: os passageiros sozinhos eram, em sua maioria, homens e da terceira classe, grupos com menor sobrevivência. Viajar sozinho não tem efeito próprio sobre a sobrevivência.
+
+Com base nos testes de Wald, da razão de verossimilhanças e de exclusão (p ≈ 0,68 em todos), a variável `sozinho` foi retirada. O modelo final passa a ser
+
+$$
+\operatorname{logit}(\mu_i) = \beta_0 + \beta_1\,\text{idade}_i + \beta_2\,\text{feminino}_i +
+\beta_3\,\text{classeI}_i + \beta_4\,\text{classeII}_i +
+\beta_5\,\text{feminino}_i\,\text{classeI}_i + \beta_6\,\text{feminino}_i\,\text{classeII}_i .
+$$
+
+```{r}
+#| label: modelo-reduzido
+modelo_completo <- modelo_final
+modelo_final <- glm(vivo ~ idade + sexo * classe,
+                    data = dados, family = binomial())
+summary(modelo_final)
+```
+
+Sem `sozinho`, as estimativas dos demais coeficientes praticamente não se alteram (por exemplo, idade: −0,043 para −0,042; sexo feminino: 1,473 para 1,447), e o desvio residual passa de 613,25 para 613,43. Isso confirma que a retirada da variável não afeta as conclusões sobre as demais covariáveis.
+
+## Forma do efeito da idade
+
+```{r}
+#| label: idade-quadratica
+# o termo quadrático melhora o modelo final?
+modelo_quad <- update(modelo_final, . ~ . + I(idade^2))
+anova(modelo_final, modelo_quad, test = "Chisq")
+AIC(modelo_final, modelo_quad)
+```
+
+A inclusão de um termo quadrático para a idade não reduz o desvio de forma significativa (TRV = 2,51; 1 gl; p = 0,113), e o AIC praticamente não muda. Mantém-se, portanto, o efeito linear da idade.
+
+## Intervalos de confiança e razões de chances
+
+```{r}
+#| label: ic-or
+# IC de 95% (perfil de verossimilhança) para os coeficientes e para exp(beta):
+ic <- confint(modelo_final)
+round(cbind(beta = coef(modelo_final), ic,
+            OR = exp(coef(modelo_final)), exp(ic)), 3)
+```
+
+Por causa da interação, o efeito de sexo é calculado dentro de cada classe, e o efeito de classe dentro de cada sexo:
+
+```{r}
+#| label: or-interacao
+# OR feminino/masculino em cada classe:
+emmeans(modelo_final, ~ sexo | classe, type = "response") |>
+  contrast(method = "revpairwise") |>
+  summary(infer = TRUE)
+
+# OR I/III e II/III em cada sexo:
+emmeans(modelo_final, ~ classe | sexo, type = "response") |>
+  contrast(method = "trt.vs.ctrl", ref = "III") |>
+  summary(infer = TRUE)
+```
+
+```{r}
+#| label: or-idade
+# OR para 10 anos a mais de idade:
+exp(10 * c(coef(modelo_final)["idade"], ic["idade", ]))
+```
+
+A chance de sobrevivência das mulheres foi 4,25 vezes a dos homens na terceira classe (IC 95%: 2,49 a 7,24), 38,1 vezes na primeira (11,1 a 130,5) e 74,3 vezes na segunda (26,7 a 207,0). Entre os homens, só a primeira classe se diferenciou da terceira (OR = 7,22; IC 95%: 3,63 a 14,37); a segunda não diferiu (p = 0,858). Entre as mulheres, a chance na primeira e na segunda classes foi 64,7 e 20,3 vezes a da terceira. A idade teve efeito negativo: cada 10 anos a mais reduziram a chance de sobreviver em cerca de 34% (OR = 0,66; IC 95%: 0,56 a 0,77). Os intervalos das mulheres nas classes I e II são largos porque houve poucos óbitos femininos nessas classes, mas nenhum deles inclui 1.
+
+# Análise de Adequação dos Resíduos
+
+O diagnóstico é feito no modelo final.
+
+## Resíduos quantílicos
+
+```{r}
+#| label: fig-ggresiduals
+#| fig-cap: "Gráficos de diagnóstico do pacote reglin."
+#| fig-height: 7
+# o ggresiduals() procura um objeto "fit" no ambiente:
+fit <- modelo_final
+set.seed(2026)
+reglin::ggresiduals(modelo_final)
+rm(fit)
+```
+
+Como `vivo` é binária, usamos o resíduo quantílico aleatorizado (Dunn e Smyth, 1996). Se o modelo estiver correto, ele tem distribuição aproximadamente normal padrão. Para olhar os resíduos contra cada covariável, calculamos o resíduo quantílico como na aula:
+
+```{r}
+#| label: residuo-quantilico
+set.seed(2026)
+p_hat <- fitted(modelo_final)
+y <- modelo_final$y
+u <- runif(length(y),
+           ifelse(y == 0, 0, 1 - p_hat),
+           ifelse(y == 0, 1 - p_hat, 1))
+r1 <- qnorm(u)
+
+mean(r1)
+sd(r1)
+shapiro.test(r1)
+sum(abs(r1) > 3)
+```
+
+Os resíduos quantílicos têm média de −0,013 e desvio-padrão de 0,978, valores próximos aos de uma normal padrão. O teste de Shapiro-Wilk não rejeita a normalidade (p = 0,286), e no QQ-plot os pontos ficam sobre a reta. Apenas uma observação tem \|r\| \> 3. Os resíduos se distribuem aleatoriamente em torno de zero contra os valores ajustados, e nenhum ponto com alta alavancagem tem resíduo grande. O modelo está bem especificado.
+
+## Resíduos de desvio e de Pearson
+
+```{r}
+#| label: fig-desvio-pearson
+#| fig-cap: "Resíduos de desvio e de Pearson padronizados versus preditor linear."
+df_res <- dados |>
+  mutate(
+    r       = r1,
+    eta     = predict(modelo_final, type = "link"),
+    r_dev   = rstandard(modelo_final, type = "deviance"),
+    r_pears = rstandard(modelo_final, type = "pearson")
+  )
+
+g_dev <- ggplot(df_res, aes(x = eta, y = r_dev, color = vivo)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = c(-2, 0, 2), linetype = c("dashed", "solid", "dashed")) +
+  scale_color_brewer(palette = "Paired") +
+  labs(x = "Preditor linear", y = "Resíduo", title = "Desvio padronizado", color = "Vivo")
+
+g_pears <- ggplot(df_res, aes(x = eta, y = r_pears, color = vivo)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = c(-2, 0, 2), linetype = c("dashed", "solid", "dashed")) +
+  scale_color_brewer(palette = "Paired") +
+  labs(x = "Preditor linear", y = "Resíduo", title = "Pearson padronizado", color = "Vivo")
+
+grid.arrange(g_dev, g_pears, ncol = 2)
+```
+
+```{r}
+#| label: contagem-desvio-pearson
+c(desvio_fora_2  = sum(abs(df_res$r_dev) > 2),
+  pearson_fora_2 = sum(abs(df_res$r_pears) > 2))
+```
+
+Os resíduos de desvio e de Pearson formam duas curvas, uma para cada valor da resposta, como se espera com resposta binária. Por isso, não servem para avaliar normalidade. Fora de ±2 ficam 28 resíduos de desvio (3,9%) e 44 de Pearson (6,2%), proporções próximas de 5%. Os valores mais extremos vêm de passageiros que morreram mesmo com alta probabilidade estimada de sobreviver; eles são analisados na seção de influência.
+
+## Resíduos versus covariáveis
+
+```{r}
+#| label: fig-res-covariaveis
+#| fig-cap: "Resíduos quantílicos versus covariáveis."
+#| fig-height: 7
+g_res_idade <- ggplot(df_res, aes(x = idade, y = r)) +
+  geom_point(alpha = 0.4, color = "dodgerblue2") +
+  geom_hline(yintercept = 0) +
+  geom_smooth(method = "loess", color = "darkorange", formula = y ~ x) +
+  labs(x = "Idade", y = "Resíduo", title = "Idade")
+
+g_res_classe <- ggplot(df_res, aes(x = classe, y = r)) +
+  geom_boxplot(fill = "dodgerblue2") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x = "Classe", y = "Resíduo", title = "Classe")
+
+g_res_sexo <- ggplot(df_res, aes(x = sexo, y = r)) +
+  geom_boxplot(fill = "dodgerblue2") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x = "Sexo", y = "Resíduo", title = "Sexo")
+
+g_res_sozinho <- ggplot(df_res, aes(x = sozinho, y = r)) +
+  geom_boxplot(fill = "dodgerblue2") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x = "Sozinho", y = "Resíduo", title = "Sozinho")
+
+grid.arrange(g_res_idade, g_res_classe, g_res_sexo, g_res_sozinho, ncol = 2)
+```
+
+Os resíduos quantílicos não mostram padrão em relação às covariáveis. Contra a idade, a curva suavizada fica próxima de zero e só se afasta acima dos 60 anos, onde há poucos passageiros. Nos boxplots de classe e sexo, as medianas estão próximas de zero e as dispersões são semelhantes. O boxplot de `sozinho`, variável retirada do modelo, também não mostra diferença entre os grupos, o que confirma que a exclusão não deixou efeito sem explicação.
+
+A `car::crPlots()` não aceita modelos com interação. Por isso, o resíduo parcial da idade foi construído somando o resíduo quantílico ao termo $\hat\beta_1\,\text{idade}$:
+
+```{r}
+#| label: fig-residuo-parcial
+#| fig-cap: "Resíduo parcial (quantílico) para a idade."
+df_parcial <- data.frame(
+  idade   = dados$idade,
+  parcial = r1 + coef(modelo_final)["idade"] * dados$idade
+)
+
+ggplot(df_parcial, aes(x = idade, y = parcial)) +
+  geom_point(alpha = 0.4, color = "dodgerblue2") +
+  geom_smooth(method = "loess", se = FALSE, color = "darkorange", formula = y ~ x) +
+  geom_smooth(method = "lm", se = FALSE, color = "red",
+              linetype = "dashed", formula = y ~ x) +
+  labs(title = "Resíduo parcial para a idade", x = "Idade", y = "Resíduo parcial")
+```
+
+No gráfico do resíduo parcial, a curva loess acompanha a reta ajustada em quase toda a faixa de idade. O afastamento acima dos 65 anos é pequeno e ocorre numa região com poucos passageiros. Isso confirma o resultado do teste do termo quadrático (p = 0,113): o efeito linear da idade na escala logito é adequado.
+
+## Influência e alavancagem
+
+```{r}
+#| label: cortes-influencia
+# alavancagem e distância de Cook:
+h    <- hatvalues(modelo_final)
+cook <- cooks.distance(modelo_final)
+n <- nrow(dados)
+p <- length(coef(modelo_final))
+
+# critérios: h >= 3p/n e Cook > F(0.5; p, n - p):
+corte_h    <- 3 * p / n
+corte_cook <- qf(0.5, p, n - p)
+c(corte_h = corte_h, corte_cook = corte_cook)
+
+c(n_alavanca = sum(h >= corte_h),
+  n_cook     = sum(cook > corte_cook),
+  max_cook   = max(cook))
+```
+
+```{r}
+#| label: fig-cook
+#| fig-cap: "Distância de Cook (pacote reglin)."
+reglin::gginfluence(modelo_final, measure = "cooksd")
+```
+
+```{r}
+#| label: fig-leverage
+#| fig-cap: "Alavancagem (pacote reglin)."
+reglin::gginfluence(modelo_final, measure = "leverage")
+```
+
+```{r}
+#| label: obs-influentes
+# observações com maior Cook e maior alavancagem:
+vars <- c("vivo", "classe", "idade", "sexo", "sozinho")
+
+ord_cook <- order(cook, decreasing = TRUE)[1:6]
+data.frame(dados[ord_cook, vars], cook = cook[ord_cook])
+
+ord_h <- order(h, decreasing = TRUE)[1:6]
+data.frame(dados[ord_h, vars], h = h[ord_h])
+```
+
+```{r}
+#| label: obitos-mulheres
+# óbitos de mulheres por classe:
+dados |>
+  filter(sexo == "feminino", vivo == "nao") |>
+  count(classe)
+```
+
+```{r}
+#| label: sensibilidade
+# sensibilidade: reajuste sem as 6 observações de maior Cook
+modelo_sem <- update(modelo_final, data = dados[-ord_cook, ])
+round(cbind(completo = coef(modelo_final), sem_influentes = coef(modelo_sem)), 3)
+```
+
+Pelo critério de Cook, nenhuma observação é influente: o maior valor é 0,064, contra o corte de 0,907. As maiores distâncias e as cinco alavancagens acima de $3p/n = 0{,}029$ vêm de mulheres das classes I e II, mas os resíduos delas são pequenos. Ao retirar as seis observações de maior Cook, só o coeficiente `sexofeminino:classeI` muda muito, de 2,19 para 17,43. Isso acontece por separação: as três únicas mulheres da 1ª classe que morreram estão entre as observações retiradas. Como são observações legítimas, elas foram mantidas.
+
+## Multicolinearidade
+
+```{r}
+#| label: vif
+# GVIF no modelo de efeitos principais:
+modelo_aditivo <- glm(vivo ~ idade + sexo + classe,
+                      data = dados, family = binomial())
+vif(modelo_aditivo)
+```
+
+Como `classe` tem dois coeficientes, olhamos a coluna $\text{GVIF}^{1/(2\,gl)}$ e comparamos com $\sqrt{10} \approx 3{,}16$. O cálculo é feito no modelo aditivo porque, com interação, os termos são correlacionados por construção.
+
+Todos os valores de $\text{GVIF}^{1/(2\,gl)}$ ficam entre 1,04 e 1,15, bem abaixo de $\sqrt{10} \approx 3{,}16$. Portanto, não há multicolinearidade relevante entre idade, sexo e classe. A correlação mais alta é a da idade com a classe (GVIF = 1,33), já que os passageiros da 3ª classe eram mais jovens, mas ela não compromete as estimativas.
+
+## Conclusão sobre a adequação
+
+Os diagnósticos indicam que o modelo está bem ajustado. Os resíduos quantílicos são compatíveis com a normal padrão (Shapiro-Wilk: p = 0,286) e não mostram padrão contra os valores ajustados nem contra as covariáveis. O efeito linear da idade é adequado, nenhuma observação é influente pelo critério de Cook e não há multicolinearidade. A única ressalva é o pequeno número de óbitos femininos nas classes I e II, que deixa largos os intervalos desses grupos. Portanto, a inferência sobre os coeficientes e as razões de chances é válida.
+
+
 #4 OddRatio & Efeitos/ Interpretação/ Conclusão
 
 Com base nos testes feitos, o modelo que mais se adequou foi
